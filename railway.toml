@@ -9,7 +9,7 @@
 
 [build]
 # Install deps from project root (uv sync uses pyproject.toml)
-# buildCommand = "uv sync"
+buildCommand = "pip install -r requirements.txt"
 
 [deploy]
 # Cron runs this on the schedule below; script fetches fact, posts to Discord, exits
