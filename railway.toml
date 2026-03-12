@@ -1,0 +1,18 @@
+# Railway config for the Discord fact cron service.
+# Use this config for the service that runs post_fact.py on a schedule:
+#   Service Settings → Config file path → bot/railway.toml
+# (Repo root stays the project root so uv sync and bot/post_fact.py resolve.)
+#
+# Template-friendly: set Variables DISCORD_BOT_TOKEN, CHANNEL_ID, CHAT_API_URL
+# as required in the template so each deploy prompts for them (different channels/servers).
+# See bot/RAILWAY_TEMPLATE.md.
+
+[build]
+# Install deps from project root (uv sync uses pyproject.toml)
+buildCommand = "uv sync"
+
+[deploy]
+# Cron runs this on the schedule below; script fetches fact, posts to Discord, exits
+startCommand = "uv run python bot/post_fact.py"
+# Every hour at minute 0 (UTC). Min interval 5 min. See: https://docs.railway.com/guides/cron-jobs
+cronSchedule = "0 * * * *"
