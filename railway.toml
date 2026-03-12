@@ -15,4 +15,4 @@ buildCommand = "pip install -r requirements.txt"
 # Cron runs this on the schedule below; script fetches fact, posts to Discord, exits
 startCommand = "python post_fact.py"
 # Every hour at minute 0 (UTC). Min interval 5 min. See: https://docs.railway.com/guides/cron-jobs
-cronSchedule = "0 * * * *"
+cronSchedule = "15 15 * * *"
