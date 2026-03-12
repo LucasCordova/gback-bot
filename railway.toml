@@ -9,10 +9,10 @@
 
 [build]
 # Install deps from project root (uv sync uses pyproject.toml)
-buildCommand = "uv sync"
+# buildCommand = "uv sync"
 
 [deploy]
 # Cron runs this on the schedule below; script fetches fact, posts to Discord, exits
-startCommand = "uv run python bot/post_fact.py"
+startCommand = "python post_fact.py"
 # Every hour at minute 0 (UTC). Min interval 5 min. See: https://docs.railway.com/guides/cron-jobs
 cronSchedule = "0 * * * *"
