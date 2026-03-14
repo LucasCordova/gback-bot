@@ -1,7 +1,7 @@
 """
 Discord bot that posts a random fact from the chat API at a set interval.
 
-Calls GET /api/chat?message=... to fetch a fact, then posts it to a Discord channel.
+Calls POST /api/chat with JSON body (shop, token, session_id, message) to fetch a fact.
 Requires: uv add discord.py httpx (or install from project root)
 
 Environment:
@@ -9,6 +9,9 @@ Environment:
     CHANNEL_ID          - Discord channel ID to post in (required)
     CHAT_API_URL        - Base URL of chat API (default: http://127.0.0.1:8000)
     INTERVAL_MINUTES    - Minutes between posts (default: 60)
+    CHAT_API_SHOP       - Optional shop identifier for chat API
+    CHAT_API_TOKEN      - Optional token for chat API
+    CHAT_SESSION_ID     - Session ID for chat API (default: fact-bot)
 """
 import asyncio
 import logging
@@ -24,25 +27,42 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-CHAT_API_URL = os.getenv("CHAT_API_URL", "http://127.0.0.1:8000").rstrip("/")
+CHAT_API_URL = os.getenv("CHAT_API_URL", "gback-production-616d.up.railway.app").rstrip("/")
 CHANNEL_ID = int(os.getenv("CHANNEL_ID", "0"))
 INTERVAL_MINUTES = int(os.getenv("INTERVAL_MINUTES", "60"))
 FACT_PROMPT = os.getenv("FACT_PROMPT", "Give me a random fact")
+# Optional: for POST /api/chat with JSON body (shop, token, session_id, message)
+CHAT_API_SHOP = os.getenv("CHAT_API_SHOP", "")
+CHAT_API_TOKEN = os.getenv("CHAT_API_TOKEN", "")
+CHAT_SESSION_ID = os.getenv("CHAT_SESSION_ID", "fact-bot")
 
 bot = commands.Bot(command_prefix="!", intents=discord.Intents.default())
 
 
 async def fetch_random_fact() -> str | None:
-    """Call the chat API and return the answer text."""
-    url = f"{CHAT_API_URL}/api/chat"
-    params = {"message": FACT_PROMPT}
+    """Call the chat API and return the answer text (POST with JSON body, like frontend)."""
+    url = f"{CHAT_API_URL}/chat"
+
+    payload = {
+        "shop": CHAT_API_SHOP,
+        "token": CHAT_API_TOKEN,
+        "session_id": CHAT_SESSION_ID,
+        "message": FACT_PROMPT,
+    }
     try:
+
         async with httpx.AsyncClient(timeout=30) as client:
-            r = await client.get(url, params=params)
+            r = await client.post(
+                url,
+                json=payload,
+                headers={"Content-Type": "application/json"},
+            )
             r.raise_for_status()
             data = r.json()
             return data.get("answer") or None
     except Exception as e:
+        logger.exception(f"url: {url}")
+        logger.exception(f"payload: {payload}")
         logger.exception("Failed to fetch fact: %s", e)
         return None
 
@@ -100,10 +120,10 @@ async def cmd_fact(ctx: commands.Context):
 
 def main():
     token = os.getenv("DISCORD_BOT_TOKEN")
-    if not token:
-        raise SystemExit("Set DISCORD_BOT_TOKEN in the environment.")
-    if CHANNEL_ID <= 0:
-        raise SystemExit("Set CHANNEL_ID to the Discord channel ID to post in.")
+    # if not token:
+    #     raise SystemExit("Set DISCORD_BOT_TOKEN in the environment.")
+    # if CHANNEL_ID <= 0:
+    #     raise SystemExit("Set CHANNEL_ID to the Discord channel ID to post in.")
     bot.run(token)
 
 
