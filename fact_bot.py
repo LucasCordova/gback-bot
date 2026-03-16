@@ -19,8 +19,10 @@ import os
 
 import discord
 import httpx
+from dotenv import load_dotenv
 from discord.ext import commands
 
+load_dotenv()
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
@@ -33,7 +35,7 @@ INTERVAL_MINUTES = int(os.getenv("INTERVAL_MINUTES", "60"))
 FACT_PROMPT = os.getenv("FACT_PROMPT", "Give me a random fact")
 # Optional: for POST /api/chat with JSON body (shop, token, session_id, message)
 CHAT_API_SHOP = os.getenv("CHAT_API_SHOP", "")
-CHAT_API_TOKEN = os.getenv("CHAT_API_TOKEN", "")
+CHAT_WIDGET_TOKEN = os.getenv("CHAT_WIDGET_TOKEN", "")
 CHAT_SESSION_ID = os.getenv("CHAT_SESSION_ID", "fact-bot")
 
 bot = commands.Bot(command_prefix="!", intents=discord.Intents.default())
@@ -45,7 +47,7 @@ async def fetch_random_fact() -> str | None:
 
     payload = {
         "shop": CHAT_API_SHOP,
-        "token": CHAT_API_TOKEN,
+        "token": CHAT_WIDGET_TOKEN,
         "session_id": CHAT_SESSION_ID,
         "message": FACT_PROMPT,
     }

@@ -69,13 +69,13 @@ No need to set start command or cron in the dashboard; `bot/railway.toml` does i
 For a persistent bot that posts on a timer and supports **`!fact`** in Discord:
 
 ```bash
-uv run python bot/fact_bot.py
+uv run python fact_bot.py
 ```
 
 Or with env vars inline:
 
 ```bash
-DISCORD_BOT_TOKEN=your_token CHANNEL_ID=123456789 uv run python bot/fact_bot.py
+DISCORD_BOT_TOKEN=your_token CHANNEL_ID=123456789 INTERVAL_MINUTES=60 uv run python fact_bot.py
 ```
 
 Behavior: on startup the bot connects to Discord, then every `INTERVAL_MINUTES` it fetches a fact and posts it. Users can type **`!fact`** in the channel to get a fact on demand.

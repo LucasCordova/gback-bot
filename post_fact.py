@@ -17,6 +17,9 @@ import os
 import sys
 
 import httpx
+from dotenv import load_dotenv
+
+load_dotenv()
 
 CHAT_API_URL = os.getenv("CHAT_API_URL", "http://127.0.0.1:8000").rstrip("/")
 CHANNEL_ID = os.getenv("CHANNEL_ID", "")
