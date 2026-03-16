@@ -17,10 +17,10 @@ import os
 import sys
 
 import httpx
+
 from dotenv import load_dotenv
 
 load_dotenv()
-
 CHAT_API_URL = os.getenv("CHAT_API_URL", "http://127.0.0.1:8000").rstrip("/")
 CHANNEL_ID = os.getenv("CHANNEL_ID", "")
 DISCORD_TOKEN = os.getenv("DISCORD_BOT_TOKEN", "")
@@ -30,10 +30,16 @@ DISCORD_API = "https://discord.com/api/v10"
 
 def fetch_fact() -> str | None:
     """Call the chat API and return the answer text."""
-    url = f"{CHAT_API_URL}/api/chat"
-    params = {"message": FACT_PROMPT}
+    url = f"{CHAT_API_URL}/chat"
+    payload = {
+        "shop": "gback",
+        "token": "generate-a-long-random-string-here",
+        "session_id": "postman-1",
+        "message": FACT_PROMPT
+    }
+    # params = {"message": FACT_PROMPT}
     with httpx.Client(timeout=30) as client:
-        r = client.get(url, params=params)
+        r = client.post(url, json=payload)
         r.raise_for_status()
         data = r.json()
         return data.get("answer") or None
