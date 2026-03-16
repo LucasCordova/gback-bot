@@ -42,6 +42,7 @@ def fetch_fact() -> str | None:
         r = client.post(url, json=payload)
         r.raise_for_status()
         data = r.json()
+        print(data)
         return data.get("answer") or None
 
 
@@ -52,6 +53,12 @@ def post_to_discord(content: str) -> None:
     payload = {"content": content[:2000]}
     with httpx.Client(timeout=10) as client:
         r = client.post(url, headers=headers, json=payload)
+        if r.status_code != 200:
+            try:
+                err = r.json()
+                print(f"Discord API error: {err.get('message', err)}", file=sys.stderr)
+            except Exception:
+                print(r.text, file=sys.stderr)
         r.raise_for_status()
 
 
