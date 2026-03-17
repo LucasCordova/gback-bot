@@ -1,4 +1,2 @@
 httpx
 python-dotenv
-json
-random
