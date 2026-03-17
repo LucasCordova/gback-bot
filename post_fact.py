@@ -35,8 +35,8 @@ def fetch_fact() -> str | None:
     url = f"{CHAT_API_URL}/chat"
 
     prompts = json.loads(FACT_PROMPT)
-    index = random.randint(0, len(prompts) - 1)
-    prompt = prompts[prompt][index]
+    index = random.randint(0, len(prompts['prompt']) - 1)
+    prompt = prompts['prompt'][index]
     prompt += f"\n\nRespond with a single fact, without any additional text or formatting. Just the fact itself. Don't show any sources."
 
     payload = {
