@@ -13,7 +13,9 @@ Environment:
 Usage:
     uv run python bot/post_fact.py
 """
+import json
 import os
+import random
 import sys
 
 import httpx
@@ -31,11 +33,17 @@ DISCORD_API = "https://discord.com/api/v10"
 def fetch_fact() -> str | None:
     """Call the chat API and return the answer text."""
     url = f"{CHAT_API_URL}/chat"
+
+    prompts = json.loads(FACT_PROMPT)
+    index = random.randint(0, len(prompts) - 1)
+    prompt = prompts[index]
+    prompt += f"\n\nRespond with a single fact, without any additional text or formatting. Just the fact itself. Don't show any sources."
+
     payload = {
         "shop": "gback",
         "token": "generate-a-long-random-string-here",
         "session_id": "postman-1",
-        "message": FACT_PROMPT
+        "message": prompt
     }
     # params = {"message": FACT_PROMPT}
     with httpx.Client(timeout=30) as client:
