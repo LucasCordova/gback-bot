@@ -51,7 +51,7 @@ async def fetch_random_fact() -> str | None:
     index = random.randint(0, len(prompts) - 1)
     prompt = prompts[index]
     prompt += f"\n\nRespond with a single fact, without any additional text or formatting. Just the fact itself. Don't show any sources."
-    logger.debug
+    logger.debug(f"Fetching fact with prompt: {prompt}")
 
     payload = {
         "shop": CHAT_API_SHOP,
