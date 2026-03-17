@@ -21,6 +21,8 @@ import discord
 import httpx
 from dotenv import load_dotenv
 from discord.ext import commands
+import json
+import random
 
 load_dotenv()
 logging.basicConfig(
@@ -45,11 +47,15 @@ async def fetch_random_fact() -> str | None:
     """Call the chat API and return the answer text (POST with JSON body, like frontend)."""
     url = f"{CHAT_API_URL}/chat"
 
+    prompts = json.loads(FACT_PROMPT)
+    index = random.randint(0, len(prompts) - 1)
+    prompt = prompts[index]
+
     payload = {
         "shop": CHAT_API_SHOP,
         "token": CHAT_WIDGET_TOKEN,
         "session_id": CHAT_SESSION_ID,
-        "message": FACT_PROMPT,
+        "message": prompt,
     }
     try:
 
