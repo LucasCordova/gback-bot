@@ -49,7 +49,7 @@ DATABASE_URL = os.getenv("DATABASE_URL", "")
 # Bot setup
 # ---------------------------------------------------------------------------
 intents = discord.Intents.default()
-intents.message_content = True
+intents.message_content = False # we only care about DMs, not guild messages
 intents.dm_messages = True
 
 bot = commands.Bot(command_prefix="!", intents=intents)
