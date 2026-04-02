@@ -1,81 +1,173 @@
-# Discord Fact Bot
+# gback-bot
 
-Posts a random fact from the chat RAG API to a Discord channel. Two ways to run:
+Always-on Discord bot with two features:
 
-- **Cron / Railway scheduled job** (recommended): run `post_fact.py` on a schedule; no long-lived process.
-- **Long-running bot**: run `fact_bot.py` for a persistent bot that posts on an interval and supports `!fact`.
+1. **Scheduled facts** — Posts a random fact to a channel on a configurable interval (replaces the Railway cron approach)
+2. **DM chat** — Users can DM the bot for a multi-turn conversation powered by your RAG chat API, with chat history stored in Postgres
 
-**Deploy multiple instances or different channels:** use a [Railway template](https://docs.railway.com/guides/create). See **[RAILWAY_TEMPLATE.md](./RAILWAY_TEMPLATE.md)** for how to turn this into a one-click template so each deploy only needs `DISCORD_BOT_TOKEN`, `CHANNEL_ID`, and `CHAT_API_URL`.
+## Architecture
+
+```
+Discord User (DM)
+    │
+    ▼
+gback-bot (always-on, Railway)
+    ├── Reads last N messages from Postgres
+    ├── Sends message + history to RAG API
+    ├── Stores user msg + bot response in Postgres
+    │
+    ▼
+chat-rag-fast-api (Railway)
+    ├── ChromaDB context retrieval
+    └── OpenRouter LLM completion
+```
+
+---
 
 ## Setup
 
-1. **Create a Discord bot**
-   - Go to [Discord Developer Portal](https://discord.com/developers/applications) → New Application.
-   - Open the **Bot** section → Add Bot → copy the **Token** (set `DISCORD_BOT_TOKEN`).
-   - Under **Privileged Gateway Intents**, enable **Message Content Intent** if you want `!fact` to work.
+### 1. Discord Developer Portal
 
-2. **Invite the bot**
-   - OAuth2 → URL Generator → scopes: `bot`; permissions: **Send Messages**, **Read Message History** (and **Read Messages/View Channels**).
-   - Open the generated URL and add the bot to your server.
+Go to [discord.com/developers/applications](https://discord.com/developers/applications) and select your bot application.
 
-3. **Get the channel ID**
-   - In Discord: User Settings → App Settings → Advanced → enable **Developer Mode**.
-   - Right‑click the channel where the bot should post → **Copy Channel ID** (set `CHANNEL_ID`).
+#### Bot settings (Bot → left sidebar):
 
-## Environment
+- **Privileged Gateway Intents** — enable these:
+  - ✅ **MESSAGE CONTENT INTENT** — required to read DM message text
+  - ✅ **SERVER MEMBERS INTENT** — not strictly required but good to have
+- Copy your **Bot Token** (you'll need it for `DISCORD_BOT_TOKEN`)
 
-Copy **`bot/.env.example`** to `.env` (or set in Railway Variables). Reference:
+#### OAuth2 (OAuth2 → URL Generator):
 
-| Variable             | Required | Default                    | Description                          |
-|----------------------|----------|----------------------------|--------------------------------------|
-| `DISCORD_BOT_TOKEN`  | Yes      | —                          | Bot token from the Developer Portal. |
-| `CHANNEL_ID`         | Yes      | —                          | Discord channel ID to post in.       |
-| `CHAT_API_URL`       | No       | `http://127.0.0.1:8000`   | Base URL of the chat API.             |
-| `INTERVAL_MINUTES`   | No       | `60`                       | Minutes between scheduled posts (fact_bot.py only). |
-| `FACT_PROMPT`        | No       | `Give me a random fact`   | Prompt sent to the chat API.          |
+If you need to re-invite the bot to a server, generate a URL with these scopes and permissions:
+- **Scopes:** `bot`
+- **Bot Permissions:**
+  - Send Messages
+  - Read Message History
+  - Use Slash Commands (optional, for future use)
 
-## Run
+> **Note:** DMs work automatically — users can DM any bot that shares a server with them. No special permission needed for DM access.
 
-### Option A: Cron / Railway scheduled job (recommended)
+### 2. Postgres on Railway
 
-Use **`post_fact.py`** for a one-shot run: fetch one fact, post to Discord, then exit. Schedule it with cron or Railway’s cron.
+1. In your Railway project, click **+ New** → **Database** → **PostgreSQL**
+2. Railway creates the database and exposes a `DATABASE_URL` variable
+3. **Link it to your bot service:**
+   - Go to your bot service → **Variables**
+   - Click **+ Variable Reference** → select the Postgres service → `DATABASE_URL`
+   - Or manually copy the connection string from the Postgres service's **Connect** tab
 
-**Local / one-off run** (from project root):
+**That's it for Postgres.** The bot auto-creates the `chat_history` table and index on first startup. No manual SQL needed.
 
-```bash
-# Use bot/.env.example as a template; set vars in .env or inline:
-uv run python bot/post_fact.py
+#### If you want to inspect the database manually:
+
+Railway's Postgres service has a **Data** tab with a built-in query editor, or connect with any Postgres client:
+
+```sql
+-- See recent chat history
+SELECT * FROM chat_history ORDER BY created_at DESC LIMIT 20;
+
+-- Count messages per user
+SELECT user_id, COUNT(*) FROM chat_history GROUP BY user_id;
+
+-- Clear a specific user's history
+DELETE FROM chat_history WHERE user_id = '123456789';
+
+-- Nuclear option: clear everything
+TRUNCATE chat_history;
 ```
 
-**Railway (config as code)**
+### 3. Environment Variables
 
-1. In the same project, create a **new service** from this repo (same repo as your chat API is fine).
-2. **Settings** → **Config file path** → set to **`bot/railway.toml`**. That file defines:
-   - **Build**: `uv sync`
-   - **Start command**: `uv run python bot/post_fact.py` (this is what runs on each cron trigger)
-   - **Cron schedule**: `0 * * * *` (every hour at :00 UTC). Edit `bot/railway.toml` to change (e.g. `0 */6 * * *` for every 6 hours).
-3. **Variables**: Add the same vars as in **`bot/.env.example`** — at minimum **`DISCORD_BOT_TOKEN`**, **`CHANNEL_ID`**, and **`CHAT_API_URL`** (your chat API’s public URL, e.g. `https://your-chat-app.railway.app`).
+Set these in Railway (service → Variables) or in `.env` for local dev:
 
-No need to set start command or cron in the dashboard; `bot/railway.toml` does it. Only the three (or four) environment variables need to be set in Railway.
+| Variable | Required | Description |
+|---|---|---|
+| `DISCORD_BOT_TOKEN` | ✅ | Bot token from Discord Developer Portal |
+| `CHANNEL_ID` | ✅ | Channel ID for scheduled fact posts |
+| `DATABASE_URL` | ✅ | Postgres connection string (auto-set by Railway if linked) |
+| `CHAT_API_URL` | ✅ | Base URL of your FastAPI RAG service |
+| `CHAT_API_SHOP` | ✅ | Shop identifier for the `/chat` endpoint |
+| `CHAT_WIDGET_TOKEN` | ✅ | Widget token for the `/chat` endpoint |
+| `FACT_INTERVAL_MINUTES` | ❌ | Minutes between fact posts (default: `480` = 8h) |
+| `FACT_PROMPT` | ❌ | Prompt(s) for facts — string or JSON (default: `Give me a random fact`) |
+| `CHAT_HISTORY_LIMIT` | ❌ | Message pairs to keep as context per user (default: `5`) |
 
-**Why cron instead of a loop**
+See `.env.example` for full details and formats.
 
-- No process running 24/7; the job runs only when the schedule triggers.
-- Fits Railway’s cron model: run a command on a schedule, then exit.
-- Exit code: 0 = success, non-zero = failure (so you can alert on failures if you want).
+### 4. Deploy
 
-### Option B: Long-running bot
+#### Railway (recommended):
 
-For a persistent bot that posts on a timer and supports **`!fact`** in Discord:
+1. Push to your repo
+2. Railway auto-deploys from `railway.toml`
+3. The bot starts as a long-running process (not a cron)
+
+> **Important:** If your service was previously configured as a **cron job** in Railway, you need to change it:
+> - Go to service **Settings** → **Deploy** section
+> - Remove the **Cron Schedule** (clear the field or toggle it off)
+> - The `railway.toml` already has `startCommand = "python bot.py"` with no cron schedule
+
+#### Local dev:
 
 ```bash
-uv run python fact_bot.py
+cp .env.example .env
+# Fill in your values
+pip install -r requirements.txt
+python bot.py
 ```
 
-Or with env vars inline:
+### 5. Chat RAG API changes
 
-```bash
-DISCORD_BOT_TOKEN=your_token CHANNEL_ID=123456789 INTERVAL_MINUTES=60 uv run python fact_bot.py
+The `/chat` endpoint on your FastAPI service now accepts an optional `history` field:
+
+```json
+{
+  "shop": "gback",
+  "token": "your-token",
+  "session_id": "discord-123456",
+  "message": "What colors does this come in?",
+  "history": [
+    {"role": "user", "content": "Tell me about the wool jacket"},
+    {"role": "assistant", "content": "The wool jacket is a premium..."},
+    {"role": "user", "content": "How much is it?"},
+    {"role": "assistant", "content": "It's priced at $149.99..."}
+  ]
+}
 ```
 
-Behavior: on startup the bot connects to Discord, then every `INTERVAL_MINUTES` it fetches a fact and posts it. Users can type **`!fact`** in the channel to get a fact on demand.
+The `history` field is optional — existing clients (web widget, etc.) continue to work without changes.
+
+---
+
+## Bot Commands
+
+| Command | Where | Description |
+|---|---|---|
+| `!fact` | Any channel/DM | Manually fetch a random fact |
+| `!clear` | DM only | Clear your chat history with the bot |
+
+---
+
+## How DM Chat Works
+
+1. User sends a DM to the bot
+2. Bot fetches the last `CHAT_HISTORY_LIMIT` message pairs from Postgres
+3. Sends the message + history to your `/chat` endpoint
+4. The RAG API retrieves context from ChromaDB and calls OpenRouter with the full conversation
+5. Bot stores both the user message and assistant response in Postgres
+6. Sends the response back to the user
+
+History is per-user (keyed by Discord user ID). Users can clear their history with `!clear`.
+
+---
+
+## Files
+
+| File | Purpose |
+|---|---|
+| `bot.py` | Main bot — DM handler, fact scheduler, commands |
+| `db.py` | Postgres chat history (asyncpg) — auto-creates tables |
+| `post_fact.py` | Legacy one-shot cron script (kept for reference, no longer used) |
+| `fact_bot.py` | Legacy long-running bot (kept for reference, replaced by `bot.py`) |
+| `railway.toml` | Railway deployment config |
