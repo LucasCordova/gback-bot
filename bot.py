@@ -153,6 +153,14 @@ async def fact_poster():
 # ---------------------------------------------------------------------------
 @bot.event
 async def on_message(message: discord.Message):
+    logger.info(
+        "on_message: author=%s bot=%s channel_type=%s content=%r",
+        message.author,
+        message.author.bot,
+        type(message.channel).__name__,
+        message.content[:100] if message.content else "",
+    )
+
     # Ignore self
     if message.author == bot.user:
         return
@@ -165,25 +173,32 @@ async def on_message(message: discord.Message):
 
         user_id = str(message.author.id)
         session_id = f"discord-{user_id}"
+        logger.info("DM from %s (ID: %s): %r", message.author, user_id, user_text[:100])
 
-        async with message.channel.typing():
-            # Fetch recent history from Postgres
-            history = await db.get_history(user_id, limit=CHAT_HISTORY_LIMIT)
+        try:
+            async with message.channel.typing():
+                # Fetch recent history from Postgres
+                history = await db.get_history(user_id, limit=CHAT_HISTORY_LIMIT)
+                logger.info("Fetched %d history messages for user %s", len(history), user_id)
 
-            # Call the RAG API
-            answer = await call_chat_api(
-                message=user_text,
-                session_id=session_id,
-                history=history,
-            )
+                # Call the RAG API
+                answer = await call_chat_api(
+                    message=user_text,
+                    session_id=session_id,
+                    history=history,
+                )
+                logger.info("Got answer (%d chars) for user %s", len(answer), user_id)
 
-            # Store both messages
-            await db.add_message(user_id, "user", user_text)
-            await db.add_message(user_id, "assistant", answer)
+                # Store both messages
+                await db.add_message(user_id, "user", user_text)
+                await db.add_message(user_id, "assistant", answer)
 
-            # Send response (split if > 2000 chars)
-            for i in range(0, len(answer), 2000):
-                await message.channel.send(answer[i : i + 2000])
+                # Send response (split if > 2000 chars)
+                for i in range(0, len(answer), 2000):
+                    await message.channel.send(answer[i : i + 2000])
+        except Exception as e:
+            logger.exception("Error handling DM from %s: %s", message.author, e)
+            await message.channel.send("Sorry, something went wrong. Please try again.")
 
     # Still process commands (!fact, etc.)
     await bot.process_commands(message)
