@@ -1,11 +1,12 @@
 """
-gback-bot — Always-on Discord bot with two jobs:
+gback-bot — Always-on Discord bot with three jobs:
 
 1. **Scheduled facts** — Posts a random fact to a channel on a configurable
-   cron-like interval (replaces the Railway cron + post_fact.py approach).
+   cron-like interval.
 2. **DM chat** — Users can DM the bot and have a multi-turn conversation
-   powered by the RAG chat API.  The last N messages per user are stored in
-   Postgres so context carries across bot restarts.
+   powered by the RAG chat API.
+3. **Slash commands** — /ask for ephemeral (private) Q&A in any channel,
+   /fact for a random fact, /clear to wipe DM history.
 
 Environment variables — see README.md and .env.example for full list.
 """
@@ -18,8 +19,9 @@ import random
 from datetime import datetime, timezone
 
 import discord
-import httpx
+from discord import app_commands
 from discord.ext import commands, tasks
+import httpx
 from dotenv import load_dotenv
 
 from db import Database
@@ -45,11 +47,15 @@ FACT_INTERVAL_MINUTES = int(os.getenv("FACT_INTERVAL_MINUTES", "480"))  # defaul
 CHAT_HISTORY_LIMIT = int(os.getenv("CHAT_HISTORY_LIMIT", "5"))
 DATABASE_URL = os.getenv("DATABASE_URL", "")
 
+# Optional: set to a guild ID for instant slash-command registration during dev.
+# Leave empty/0 in production to register commands globally.
+DEV_GUILD_ID = int(os.getenv("DEV_GUILD_ID", "0"))
+
 # ---------------------------------------------------------------------------
 # Bot setup
 # ---------------------------------------------------------------------------
 intents = discord.Intents.default()
-intents.message_content = False # we only care about DMs, not guild messages
+intents.message_content = False  # we only care about DMs, not guild messages
 intents.dm_messages = True
 
 bot = commands.Bot(command_prefix="!", intents=intents)
@@ -107,17 +113,6 @@ async def fetch_random_fact() -> str | None:
 # ---------------------------------------------------------------------------
 # Scheduled fact posting
 # ---------------------------------------------------------------------------
-@tasks.loop(minutes=1)  # checks every minute, posts based on interval
-async def post_fact_loop():
-    pass  # replaced by the dynamic interval below
-
-
-@post_fact_loop.before_loop
-async def before_post_fact():
-    await bot.wait_until_ready()
-
-
-# We use a simple task instead of tasks.loop with dynamic minutes
 async def fact_poster():
     """Post a fact every FACT_INTERVAL_MINUTES."""
     await bot.wait_until_ready()
@@ -149,18 +144,79 @@ async def fact_poster():
 
 
 # ---------------------------------------------------------------------------
-# DM chat handler
+# Slash commands
+# ---------------------------------------------------------------------------
+@bot.tree.command(name="ask", description="Ask a question (only you see the answer)")
+@app_commands.describe(question="Your question")
+async def slash_ask(interaction: discord.Interaction, question: str):
+    """Ephemeral Q&A — only the invoking user sees the question and response."""
+    await interaction.response.defer(ephemeral=True)
+
+    user_id = str(interaction.user.id)
+    session_id = f"discord-{user_id}"
+
+    try:
+        history = await db.get_history(user_id, limit=CHAT_HISTORY_LIMIT)
+        answer = await call_chat_api(
+            message=question,
+            session_id=session_id,
+            history=history,
+        )
+
+        await db.add_message(user_id, "user", question)
+        await db.add_message(user_id, "assistant", answer)
+
+        # Split long responses (followup messages also support ephemeral)
+        for i in range(0, len(answer), 2000):
+            await interaction.followup.send(answer[i : i + 2000], ephemeral=True)
+
+    except Exception as e:
+        logger.exception("Error handling /ask from %s: %s", interaction.user, e)
+        await interaction.followup.send(
+            "Sorry, something went wrong. Please try again.", ephemeral=True
+        )
+
+
+@bot.tree.command(name="fact", description="Get a random fact")
+async def slash_fact(interaction: discord.Interaction):
+    """Fetch and display a random fact (ephemeral)."""
+    await interaction.response.defer(ephemeral=True)
+
+    try:
+        fact = await fetch_random_fact()
+        if fact:
+            await interaction.followup.send(fact[:2000], ephemeral=True)
+        else:
+            await interaction.followup.send(
+                "Could not fetch a fact right now.", ephemeral=True
+            )
+    except Exception as e:
+        logger.exception("Error handling /fact: %s", e)
+        await interaction.followup.send(
+            "Sorry, something went wrong.", ephemeral=True
+        )
+
+
+@bot.tree.command(name="clear", description="Clear your chat history with the bot")
+async def slash_clear(interaction: discord.Interaction):
+    """Clear the invoking user's conversation history."""
+    await interaction.response.defer(ephemeral=True)
+
+    try:
+        await db.clear_history(str(interaction.user.id))
+        await interaction.followup.send("Chat history cleared! 🧹", ephemeral=True)
+    except Exception as e:
+        logger.exception("Error handling /clear: %s", e)
+        await interaction.followup.send(
+            "Sorry, something went wrong.", ephemeral=True
+        )
+
+
+# ---------------------------------------------------------------------------
+# DM chat handler (unchanged — still works alongside slash commands)
 # ---------------------------------------------------------------------------
 @bot.event
 async def on_message(message: discord.Message):
-    logger.info(
-        "on_message: author=%s bot=%s channel_type=%s content=%r",
-        message.author,
-        message.author.bot,
-        type(message.channel).__name__,
-        message.content[:100] if message.content else "",
-    )
-
     # Ignore self
     if message.author == bot.user:
         return
@@ -177,55 +233,23 @@ async def on_message(message: discord.Message):
 
         try:
             async with message.channel.typing():
-                # Fetch recent history from Postgres
                 history = await db.get_history(user_id, limit=CHAT_HISTORY_LIMIT)
-                logger.info("Fetched %d history messages for user %s", len(history), user_id)
-
-                # Call the RAG API
                 answer = await call_chat_api(
                     message=user_text,
                     session_id=session_id,
                     history=history,
                 )
-                logger.info("Got answer (%d chars) for user %s", len(answer), user_id)
 
-                # Store both messages
                 await db.add_message(user_id, "user", user_text)
                 await db.add_message(user_id, "assistant", answer)
 
-                # Send response (split if > 2000 chars)
                 for i in range(0, len(answer), 2000):
                     await message.channel.send(answer[i : i + 2000])
         except Exception as e:
             logger.exception("Error handling DM from %s: %s", message.author, e)
             await message.channel.send("Sorry, something went wrong. Please try again.")
 
-    # Still process commands (!fact, etc.)
     await bot.process_commands(message)
-
-
-# ---------------------------------------------------------------------------
-# Commands
-# ---------------------------------------------------------------------------
-@bot.command(name="fact")
-async def cmd_fact(ctx: commands.Context):
-    """Manually request a random fact."""
-    await ctx.send("Fetching a fact…")
-    fact = await fetch_random_fact()
-    if fact:
-        await ctx.send(fact[:2000])
-    else:
-        await ctx.send("Could not fetch a fact right now.")
-
-
-@bot.command(name="clear")
-async def cmd_clear(ctx: commands.Context):
-    """Clear your DM chat history with the bot."""
-    if not isinstance(ctx.channel, discord.DMChannel):
-        await ctx.send("This command only works in DMs.")
-        return
-    await db.clear_history(str(ctx.author.id))
-    await ctx.send("Chat history cleared! 🧹")
 
 
 # ---------------------------------------------------------------------------
@@ -235,6 +259,19 @@ async def cmd_clear(ctx: commands.Context):
 async def on_ready():
     logger.info("Bot ready — logged in as %s (ID: %s)", bot.user, bot.user.id)
     await db.init()
+
+    # Sync slash commands
+    if DEV_GUILD_ID:
+        # Instant sync to a single guild (for development/testing)
+        guild = discord.Object(id=DEV_GUILD_ID)
+        bot.tree.copy_global_to(guild=guild)
+        synced = await bot.tree.sync(guild=guild)
+        logger.info("Synced %d slash commands to dev guild %s", len(synced), DEV_GUILD_ID)
+    else:
+        # Global sync (can take up to 1 hour to propagate)
+        synced = await bot.tree.sync()
+        logger.info("Synced %d slash commands globally", len(synced))
+
     bot.loop.create_task(fact_poster())
 
 
