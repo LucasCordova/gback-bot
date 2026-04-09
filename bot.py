@@ -46,6 +46,7 @@ FACT_PROMPT = os.getenv("FACT_PROMPT", "Give me a random fact")
 FACT_INTERVAL_MINUTES = int(os.getenv("FACT_INTERVAL_MINUTES", "480"))  # default 8h
 CHAT_HISTORY_LIMIT = int(os.getenv("CHAT_HISTORY_LIMIT", "5"))
 DATABASE_URL = os.getenv("DATABASE_URL", "")
+DAY_THRESHOLD = int(os.getenv("DAY_THRESHOLD", "9"))
 
 # Optional: set to a guild ID for instant slash-command registration during dev.
 # Leave empty/0 in production to register commands globally.
@@ -105,7 +106,16 @@ async def fetch_random_fact() -> str | None:
         prompt_list = [FACT_PROMPT]
 
     prompt = random.choice(prompt_list)
-    prompt += "\n\nRespond with a single fact, without any additional text or formatting. Just the fact itself. Don't show any sources."
+
+    fact_history = await db.get_fact_history(day_threshold=DAY_THRESHOLD)
+
+    ## Append the fact history to the prompt and do not repeat the same fact verbatim.
+
+    prompt += f'''\n\nRespond with a single fact, without any additional text or formatting.  
+        Just the fact itself. Don't show any sources. 
+            Do not repeat the same concept of the following facts, make the fact a distinct wording.
+            \n\nFact history: {fact_history}'''
+    logger.info(f"Fetching fact with prompt: {prompt}")
 
     return await call_chat_api(prompt, session_id="fact-bot")
 

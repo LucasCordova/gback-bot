@@ -31,6 +31,17 @@ CREATE INDEX IF NOT EXISTS idx_chat_history_user_id
     ON chat_history (user_id, created_at DESC);
 """
 
+CREATE_TABLE_FACT_HISTORY = """
+CREATE TABLE IF NOT EXISTS fact_history (
+    id              SERIAL PRIMARY KEY,
+    fact_prompt     TEXT NOT NULL,
+    date_sent       TIMESTAMPTZ NOT NULL,
+);
+
+CREATE INDEX IF NOT EXISTS idx_fact_history_on_date_sent
+    ON fact_history (id, date_sent DESC);
+"""
+
 
 class Database:
     """Async Postgres wrapper for chat history."""
@@ -44,7 +55,8 @@ class Database:
         self.pool = await asyncpg.create_pool(self.dsn, min_size=1, max_size=5)
         async with self.pool.acquire() as conn:
             await conn.execute(CREATE_TABLE)
-        logger.info("Database initialized — chat_history table ready.")
+            await conn.execute(CREATE_TABLE_FACT_HISTORY)
+        logger.info("Database initialized — history tables ready.")
 
     async def add_message(self, user_id: str, role: str, content: str):
         """Insert a message into chat history."""
@@ -55,7 +67,24 @@ class Database:
                 role,
                 content,
             )
-
+    async def add_fact(self, fact_prompt: str, date_sent: datetime):
+        """Insert a fact into fact history."""
+        async with self.pool.acquire() as conn:
+            await conn.execute(
+                "INSERT INTO fact_history (fact_prompt, date_sent) VALUES ($1, $2)",
+                fact_prompt,
+                date_sent,
+            )
+    
+    async def get_fact_history(self, day_threshold: int = 9) -> list[dict]:
+        """Fetch the last `day_threshold` days fact prompts."""
+        async with self.pool.acquire() as conn:
+            rows = await conn.fetch(
+                "SELECT fact_prompt FROM fact_history WHERE date_sent > NOW() - INTERVAL $1 days ORDER BY date_sent DESC",
+                day_threshold=day_threshold,
+            )
+        return [{"fact_prompt": r["fact_prompt"]} for r in rows]
+    
     async def get_history(self, user_id: str, limit: int = 5) -> list[dict]:
         """
         Fetch the last `limit` message *pairs* (user + assistant) for a user.
