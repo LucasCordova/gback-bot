@@ -86,8 +86,8 @@ async def call_chat_api(message: str, session_id: str, history: list[dict] | Non
             )
             r.raise_for_status()
             data = r.json()
-            response = await data.get("answer", "Sorry, I couldn't get a response.")
-            db.add_fact(response, datetime.now(timezone.utc))
+            response = data.get("answer", "Sorry, I couldn't get a response.")
+            await db.add_fact(response, datetime.now(timezone.utc))
             return response
     except Exception as e:
         logger.exception("Chat API error: %s", e)
