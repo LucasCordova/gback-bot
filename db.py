@@ -35,11 +35,9 @@ CREATE_TABLE_FACT_HISTORY = """
 CREATE TABLE IF NOT EXISTS fact_history (
     id              SERIAL PRIMARY KEY,
     fact_prompt     TEXT NOT NULL,
-    date_sent       TIMESTAMPTZ NOT NULL,
+    date_sent       TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE INDEX IF NOT EXISTS idx_fact_history_on_date_sent
-    ON fact_history (id, date_sent DESC);
 """
 
 
