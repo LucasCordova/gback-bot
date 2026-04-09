@@ -79,7 +79,7 @@ class Database:
         async with self.pool.acquire() as conn:
             rows = await conn.fetch(
                 "SELECT fact_prompt FROM fact_history WHERE date_sent > NOW() - INTERVAL $1 days ORDER BY date_sent DESC",
-                day_threshold=day_threshold,
+                day_threshold,
             )
         return [{"fact_prompt": r["fact_prompt"]} for r in rows]
     
