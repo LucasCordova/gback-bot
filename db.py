@@ -78,7 +78,12 @@ class Database:
         """Fetch the last `day_threshold` days fact prompts."""
         async with self.pool.acquire() as conn:
             rows = await conn.fetch(
-                "SELECT fact_prompt FROM fact_history WHERE date_sent > NOW() - INTERVAL $1 days ORDER BY date_sent DESC",
+                """
+                SELECT fact_prompt
+                FROM fact_history
+                WHERE date_sent > NOW() - ($1::integer * INTERVAL '1 day')
+                ORDER BY date_sent DESC
+                """,
                 int(day_threshold),
             )
         return [{"fact_prompt": r["fact_prompt"]} for r in rows]
