@@ -182,6 +182,10 @@ async def _post_one_fact(channel) -> None:
         logger.exception("Error posting fact: %s", e)
 
 
+# on_ready can run more than once (e.g. reconnects); only one fact loop may run.
+_fact_poster_task: asyncio.Task | None = None
+
+
 async def fact_poster():
     """Post one fact per day at FACT_POST_TIME in FACT_TIMEZONE."""
     await bot.wait_until_ready()
@@ -346,7 +350,14 @@ async def on_ready():
         synced = await bot.tree.sync()
         logger.info("Synced %d slash commands globally", len(synced))
 
-    bot.loop.create_task(fact_poster())
+    global _fact_poster_task
+    if CHANNEL_ID <= 0:
+        return
+
+    if _fact_poster_task is not None and not _fact_poster_task.done():
+        logger.debug("fact_poster task already running — not starting another")
+        return
+    _fact_poster_task = asyncio.create_task(fact_poster())
 
 
 def main():
