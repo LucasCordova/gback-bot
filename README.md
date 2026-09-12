@@ -2,7 +2,7 @@
 
 Always-on Discord bot with two features:
 
-1. **Scheduled facts** — Posts a random fact to a channel on a configurable interval (replaces the Railway cron approach)
+1. **Scheduled facts** — Posts a random fact to a channel once a day at a fixed local time (replaces the Railway cron approach)
 2. **DM chat** — Users can DM the bot for a multi-turn conversation powered by your RAG chat API, with chat history stored in Postgres
 
 ## Architecture
@@ -89,8 +89,10 @@ Set these in Railway (service → Variables) or in `.env` for local dev:
 | `CHAT_API_URL` | ✅ | Base URL of your FastAPI RAG service |
 | `CHAT_API_SHOP` | ✅ | Shop identifier for the `/chat` endpoint |
 | `CHAT_WIDGET_TOKEN` | ✅ | Widget token for the `/chat` endpoint |
-| `FACT_INTERVAL_MINUTES` | ❌ | Minutes between fact posts (default: `480` = 8h) |
-| `FACT_PROMPT` | ❌ | Prompt(s) for facts — string or JSON (default: `Give me a random fact`) |
+| `FACT_POST_TIME` | ❌ | Local time of the daily fact post, 24h `HH:MM` (default: `12:00`) |
+| `FACT_TIMEZONE` | ❌ | IANA timezone for `FACT_POST_TIME` (default: `America/Los_Angeles`) |
+| `FACT_POST_ON_START` | ❌ | Also post once immediately on boot, for testing a deploy (default: `false`) |
+| `FACT_PROMPT` | ❌ | Overrides the `FACT_PROMPTS` list in `bot.py` — string or JSON. Leave unset to use the list in code. |
 | `CHAT_HISTORY_LIMIT` | ❌ | Message pairs to keep as context per user (default: `5`) |
 
 See `.env.example` for full details and formats.

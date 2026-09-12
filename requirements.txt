@@ -2,3 +2,4 @@ discord.py>=2.3
 httpx
 asyncpg
 python-dotenv
+tzdata

@@ -1,8 +1,8 @@
 """
 gback-bot — Always-on Discord bot with three jobs:
 
-1. **Scheduled facts** — Posts a random fact to a channel on a configurable
-   cron-like interval.
+1. **Scheduled facts** — Posts a random fact to a channel once a day at a
+   fixed local time (default 12:00 PM America/Los_Angeles).
 2. **DM chat** — Users can DM the bot and have a multi-turn conversation
    powered by the RAG chat API.
 3. **Slash commands** — /ask for ephemeral (private) Q&A in any channel,
@@ -16,7 +16,8 @@ import json
 import logging
 import os
 import random
-from datetime import datetime, timezone
+from datetime import datetime, time as dtime, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 import discord
 from discord import app_commands
@@ -42,11 +43,30 @@ CHANNEL_ID = int(os.getenv("CHANNEL_ID", "0"))
 CHAT_API_URL = os.getenv("CHAT_API_URL", "http://127.0.0.1:8000").rstrip("/")
 CHAT_API_SHOP = os.getenv("CHAT_API_SHOP", "")
 CHAT_WIDGET_TOKEN = os.getenv("CHAT_WIDGET_TOKEN", "")
-FACT_PROMPT = os.getenv("FACT_PROMPT", "Give me a random fact")
-FACT_INTERVAL_MINUTES = int(os.getenv("FACT_INTERVAL_MINUTES", "480"))  # default 8h
+FACT_PROMPT = os.getenv("FACT_PROMPT", "")  # optional override of FACT_PROMPTS below
+
+# Once a day, at this local wall-clock time. Unlike a plain interval, this does
+# not drift when Railway restarts the container.
+FACT_POST_TIME = os.getenv("FACT_POST_TIME", "12:00")  # 24h "HH:MM"
+FACT_TIMEZONE = os.getenv("FACT_TIMEZONE", "America/Los_Angeles")
+# Post one fact immediately on startup as well (useful for testing a deploy).
+FACT_POST_ON_START = os.getenv("FACT_POST_ON_START", "false").lower() in ("1", "true", "yes")
 CHAT_HISTORY_LIMIT = int(os.getenv("CHAT_HISTORY_LIMIT", "5"))
 DATABASE_URL = os.getenv("DATABASE_URL", "")
 DAY_THRESHOLD = int(os.getenv("DAY_THRESHOLD", "9"))
+
+# The pool of questions asked of the RAG, one picked at random per post.
+# Edit this list to change what the daily fact is about. Setting the FACT_PROMPT
+# env var overrides this list entirely.
+FACT_PROMPTS = [
+    "What are the three failures of legacy corporate giving?",
+    "Why do blockchains fix proof rather than generosity?",
+    "What problem is Giveback actually solving?",
+    "What does it mean for giving to run like payroll?",
+    "What gets written on chain the moment a donation lands?",
+    "Why does the protocol run on Solana instead of somewhere else?",
+    "What does a nonprofit get here that they don't get anywhere else?",
+]
 
 # Optional: set to a guild ID for instant slash-command registration during dev.
 # Leave empty/0 in production to register commands globally.
@@ -96,16 +116,19 @@ async def call_chat_api(message: str, session_id: str, history: list[dict] | Non
 
 async def fetch_random_fact() -> str | None:
     """Fetch a random fact using the configured prompts."""
-    try:
-        prompts = json.loads(FACT_PROMPT)
-        if isinstance(prompts, dict) and "prompt" in prompts:
-            prompt_list = prompts["prompt"]
-        elif isinstance(prompts, list):
-            prompt_list = prompts
-        else:
-            prompt_list = [str(prompts)]
-    except (json.JSONDecodeError, TypeError):
-        prompt_list = [FACT_PROMPT]
+    if not FACT_PROMPT.strip():
+        prompt_list = FACT_PROMPTS
+    else:
+        try:
+            prompts = json.loads(FACT_PROMPT)
+            if isinstance(prompts, dict) and "prompt" in prompts:
+                prompt_list = prompts["prompt"]
+            elif isinstance(prompts, list):
+                prompt_list = prompts
+            else:
+                prompt_list = [str(prompts)]
+        except (json.JSONDecodeError, TypeError):
+            prompt_list = [FACT_PROMPT]
 
     prompt = random.choice(prompt_list)
 
@@ -125,34 +148,73 @@ async def fetch_random_fact() -> str | None:
 # ---------------------------------------------------------------------------
 # Scheduled fact posting
 # ---------------------------------------------------------------------------
+def _parse_post_time(value: str) -> dtime:
+    """Parse a 24-hour "HH:MM" string, falling back to noon if it is malformed."""
+    try:
+        hour, minute = (int(part) for part in value.strip().split(":", 1))
+        return dtime(hour=hour, minute=minute)
+    except (ValueError, TypeError):
+        logger.warning("Invalid FACT_POST_TIME %r — falling back to 12:00.", value)
+        return dtime(hour=12, minute=0)
+
+
+def _seconds_until_next_post(post_time: dtime, tz: ZoneInfo) -> float:
+    """Seconds from now until the next occurrence of `post_time` in `tz`."""
+    now = datetime.now(tz)
+    target = now.replace(
+        hour=post_time.hour, minute=post_time.minute, second=0, microsecond=0
+    )
+    if target <= now:
+        target += timedelta(days=1)
+    return (target - now).total_seconds()
+
+
+async def _post_one_fact(channel) -> None:
+    """Fetch a fact and send it, logging (but swallowing) any failure."""
+    try:
+        fact = await fetch_random_fact()
+        if fact:
+            await channel.send(fact[:2000])
+            logger.info("Posted fact to #%s", getattr(channel, "name", "?"))
+        else:
+            logger.warning("No fact returned from API.")
+    except Exception as e:
+        logger.exception("Error posting fact: %s", e)
+
+
 async def fact_poster():
-    """Post a fact every FACT_INTERVAL_MINUTES."""
+    """Post one fact per day at FACT_POST_TIME in FACT_TIMEZONE."""
     await bot.wait_until_ready()
     channel = bot.get_channel(CHANNEL_ID)
     if not channel:
         logger.error("Channel ID %s not found — fact posting disabled.", CHANNEL_ID)
         return
 
+    post_time = _parse_post_time(FACT_POST_TIME)
+    try:
+        tz = ZoneInfo(FACT_TIMEZONE)
+    except Exception:
+        logger.warning("Unknown FACT_TIMEZONE %r — falling back to UTC.", FACT_TIMEZONE)
+        tz = ZoneInfo("UTC")
+
     logger.info(
-        "Posting facts to #%s (%s) every %s minutes.",
+        "Posting one fact a day to #%s (%s) at %02d:%02d %s.",
         getattr(channel, "name", "?"),
         CHANNEL_ID,
-        FACT_INTERVAL_MINUTES,
+        post_time.hour,
+        post_time.minute,
+        FACT_TIMEZONE,
     )
 
-    while True:
-        try:
-            fact = await fetch_random_fact()
-            if fact:
-                text = fact[:2000]
-                await channel.send(text)
-                logger.info("Posted fact to #%s", getattr(channel, "name", "?"))
-            else:
-                logger.warning("No fact returned from API.")
-        except Exception as e:
-            logger.exception("Error posting fact: %s", e)
+    if FACT_POST_ON_START:
+        logger.info("FACT_POST_ON_START set — posting one fact now.")
+        await _post_one_fact(channel)
 
-        await asyncio.sleep(FACT_INTERVAL_MINUTES * 60)
+    while True:
+        delay = _seconds_until_next_post(post_time, tz)
+        logger.info("Next fact in %.1f hours.", delay / 3600)
+        await asyncio.sleep(delay)
+        await _post_one_fact(channel)
 
 
 # ---------------------------------------------------------------------------
